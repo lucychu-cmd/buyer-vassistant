@@ -93,15 +93,24 @@ python3 scripts/lineguide_deck_generator.py \
 - Meeting date: the filename uses today's date as `{M.DD}` (month no leading zero, day two
   digits). Override with `--meeting-date 6.02` if the user names a specific meeting date.
 
-**Sample photos (optional, from Google Drive).** If the user wants vendor sample photos on the
-slides, fetch them from the shared Drive (the user needs the Google Drive connector connected):
+**Sample photos (from Google Drive).** Optional in general, but **when the user asks for the
+lineguide "with sample photos" (or points you at a photo folder/Drive link), fetching them is part
+of the deliverable — not an optional extra.** The user needs the Google Drive connector connected.
 
 1. For each style, take the stylecode prefix (before the first `-`, e.g. `MJOW10024`) and search
-   Drive for images whose title contains it. **Only download the photos actually needed** — never
-   bulk-download a folder. Not every style has photos; those render with the CAD only.
+   Drive for images whose title contains it. The search reaches every folder the user can access,
+   so you do **not** need a folder link — a stylecode search finds photos wherever they live.
+   **Only download the photos actually needed** — never bulk-download a folder, and never try to
+   pull every photo in Drive. Not every style has photos; those render with the CAD only.
 2. Decode/download them into a **sandbox temp dir** (`default_photos_tmp()`, e.g.
-   `/tmp/lineguide_photos`) named `<stylecode>... front/back/side/wr left/wr right ...`. NEVER write
+   `/tmp/lineguide_photos`), saving each file under its original Drive title (it already starts
+   with the stylecode and carries the view word — `front/back/side/wr left/wr right`). NEVER write
    sample photos into the user's output/working folder or anywhere on their computer.
+   - The Drive download tool returns each file as base64 (large files land in a tool-result file on
+     disk, small ones inline); decode to bytes and write. If there are many photos, delegate the
+     downloads to a subagent so the base64 stays out of the main context — but download **once**,
+     in a single pass. Do not re-run the whole download after a partial success; fetch only the
+     files still missing.
 3. Pass that dir and run with cleanup so nothing persists:
 
 ```bash
@@ -115,6 +124,27 @@ Placement (all off-slide, hidden in present/print): CAD top-right (right edge at
 FRONT top-left, SIDE under front, BACK bottom-right; any OTHER views in a row **below** the slide
 aligned to the slide's left edge. View mapping: `front`->front, `back`->back, `side` or `WR left`
 ->side, everything else->other. See `references/lineguide.md` -> "Sample photos".
+
+**Verify photos populated, and report honestly (REQUIRED when photos were requested).** The photos
+sit off-slide, so you cannot tell from a glance whether they made it in — you MUST check the built
+deck programmatically before claiming success. A deck with zero photos still opens and looks fine,
+so "it generated" is NOT evidence the photos are there. After building, count the pictures per
+slide and compare to how many photos you downloaded:
+
+```python
+from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
+prs = Presentation("path/to/output.pptx")
+for i, s in enumerate(prs.slides, 1):
+    n = sum(1 for sh in s.shapes if sh.shape_type == MSO_SHAPE_TYPE.PICTURE)
+    print(f"slide {i}: {n} pictures")  # 1 == CAD only (no sample photos); >1 == photos present
+```
+
+Then tell the user plainly: **"X of N styles have sample photos"**, and name the styles that came
+back CAD-only. If the Google Drive connector is not connected, or a stylecode search returns
+nothing, say so explicitly — **never present a CAD-only or photo-less deck as if the photos were
+added.** If the user asked for photos and none populated, that is a failure to surface, not a quiet
+success.
 
 **Output filename:** `{M.DD} BUY MEETING - {BRAND_ABBR}.pptx`. `{BRAND_ABBR}` is the brand
 abbreviation; a multi-brand lineguide joins each distinct brand's abbreviation with ` + ` in
