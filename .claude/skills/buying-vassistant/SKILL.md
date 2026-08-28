@@ -9,7 +9,8 @@ description: >-
   View" sheet. Use whenever the user attaches or points to a buying/buy-prep/lineguide
   Excel file (.xls/.xlsx) and wants a deck, slides, board, or "buy meeting" PPTX — even
   if they only say "run the lineguide," "make the merch board," "buyer lineguide,"
-  "assortment board," "buy meeting deck," "add these styles to the board," or name a
+  "lineguide with form photos," "assortment board," "buy meeting deck," "add these
+  styles to the board," or name a
   brand + buy (e.g. "LF Nov", "NBD 2027"). Also use for incremental updates to an
   existing merch board. Do NOT use for generic .xlsx cleanup, charts, or Word/PDF work
   unrelated to these buy-meeting deck formats.
@@ -108,8 +109,8 @@ path found an image for that style.
 - Meeting date: the filename uses today's date as `{M.DD}` (month no leading zero, day two
   digits). Override with `--meeting-date 6.02` if the user names a specific meeting date.
 
-**Sample photos (from Google Drive).** Optional in general, but **when the user asks for the
-lineguide "with sample photos" (or points you at a photo folder/Drive link), fetching them is part
+**Form photos (from Google Drive).** Optional in general, but **when the user asks for the
+lineguide "with form photos" (or points you at a photo folder/Drive link), fetching them is part
 of the deliverable — not an optional extra.** The user needs the Google Drive connector connected.
 
 1. For each style, take the stylecode prefix (before the first `-`, e.g. `MJOW10024`) and search
@@ -120,7 +121,7 @@ of the deliverable — not an optional extra.** The user needs the Google Drive 
 2. Decode/download them into a **sandbox temp dir** (`default_photos_tmp()`, e.g.
    `/tmp/lineguide_photos`), saving each file under its original Drive title (it already starts
    with the stylecode and carries the view word — `front/back/side/wr left/wr right`). NEVER write
-   sample photos into the user's output/working folder or anywhere on their computer.
+   form photos into the user's output/working folder or anywhere on their computer.
    - The Drive download tool returns each file as base64 (large files land in a tool-result file on
      disk, small ones inline); decode to bytes and write. If there are many photos, delegate the
      downloads to a subagent so the base64 stays out of the main context — but download **once**,
@@ -138,7 +139,7 @@ python3 scripts/lineguide_deck_generator.py \
 Placement (all off-slide, hidden in present/print): CAD top-right (right edge at `x=-0.20"`),
 FRONT top-left, SIDE under front, BACK bottom-right; any OTHER views in a row **below** the slide
 aligned to the slide's left edge. View mapping: `front`->front, `back`->back, `side` or `WR left`
-->side, everything else->other. See `references/lineguide.md` -> "Sample photos".
+->side, everything else->other. See `references/lineguide.md` -> "Form photos".
 
 **Verify photos populated, and report honestly (REQUIRED when photos were requested).** The photos
 sit off-slide, so you cannot tell from a glance whether they made it in — you MUST check the built
@@ -152,10 +153,10 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 prs = Presentation("path/to/output.pptx")
 for i, s in enumerate(prs.slides, 1):
     n = sum(1 for sh in s.shapes if sh.shape_type == MSO_SHAPE_TYPE.PICTURE)
-    print(f"slide {i}: {n} pictures")  # 1 == CAD only (no sample photos); >1 == photos present
+    print(f"slide {i}: {n} pictures")  # 1 == CAD only (no form photos); >1 == photos present
 ```
 
-Then tell the user plainly: **"X of N styles have sample photos"**, and name the styles that came
+Then tell the user plainly: **"X of N styles have form photos"**, and name the styles that came
 back CAD-only. If the Google Drive connector is not connected, or a stylecode search returns
 nothing, say so explicitly — **never present a CAD-only or photo-less deck as if the photos were
 added.** If the user asked for photos and none populated, that is a failure to surface, not a quiet

@@ -227,10 +227,10 @@ python3 lineguide_deck_generator.py <input.xls> <input.xlsx> [--out-dir DIR] [--
 It prints `wrote: <path>` on success.
 
 
-## Sample photos (Google Drive) — v2
+## Form photos (Google Drive) — v2
 
 The embedded image in the `.xls` is the **CAD**, kept in the off-slide top-right slot. In
-addition, vendor **sample photos** can be placed around it. Photos live in the shared Drive under
+addition, vendor **form photos** can be placed around it. Photos live in the shared Drive under
 the brand folder, named by stylecode + view (e.g. `MJOW10024-H26 front.jpg`,
 `LFOW10127.25JB283.SIDE.jpg`).
 
@@ -239,7 +239,7 @@ Rules:
   against Drive filenames. Styles with no match render with the CAD only.
 - Photos are **transient inputs, never deliverables.** Download/decode into a sandbox temp dir
   (`default_photos_tmp()`), pass `--photos-dir`, and run with `--cleanup-photos` so they are
-  deleted after the deck is built. Never write sample photos into the user's folder or computer.
+  deleted after the deck is built. Never write form photos into the user's folder or computer.
 - View -> slot mapping (case-insensitive substring on the filename): `front`->front, `back`->back,
   `side` **or** `WR left`->side (these vendors label the left profile "WR left"); anything else
   (`WR right`, detail shots) -> **other**.
