@@ -1098,7 +1098,7 @@ def _fill_cell(cell, text: str, *, bold: bool, size_pt: float, bg: RGBColor | No
 # ---------------------------------------------------------------------------
 # Sample-photo grid (Google Drive photos) — off-slide
 # ---------------------------------------------------------------------------
-# The embedded CAD stays in the top-right off-slide slot. Optional sample photos
+# The embedded CAD stays in the top-right off-slide slot. Optional form photos
 # (fetched from Drive by the assistant, keyed by stylecode) are placed around it:
 #     [ FRONT ] [ CAD  ] | SLIDE      other views -> a row BELOW the slide,
 #     [ SIDE  ] [ BACK ] |            aligned to the slide's LEFT edge.
@@ -1293,7 +1293,7 @@ def main():
     ap.add_argument("--out-dir", default=".")
     ap.add_argument("--meeting-date", default=None)
     ap.add_argument("--photos-dir", default=None,
-                    help="TEMP folder of Drive sample photos named <STYLECODE>... front/back/side/etc. "
+                    help="TEMP folder of Drive form photos named <STYLECODE>... front/back/side/etc. "
                          "Use a sandbox temp dir (default_photos_tmp), NOT the user output folder.")
     ap.add_argument("--cleanup-photos", action="store_true",
                     help="delete --photos-dir after the deck is built")
