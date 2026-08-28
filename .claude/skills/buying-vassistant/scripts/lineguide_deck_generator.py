@@ -535,6 +535,206 @@ def attach_images(xlsx_path: Path, products: List[Product]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Image extraction DIRECTLY from the .xls (LibreOffice-free fallback)
+# ---------------------------------------------------------------------------
+# The normal path reads embedded CADs from an .xlsx companion produced by
+# LibreOffice. When `soffice` is unavailable or fails (some sandboxes have a
+# broken LibreOffice that can't load any file), we extract the CADs straight
+# from the .xls BIFF stream instead, so the deck still gets its CAD images.
+#
+# .xls (BIFF8) stores drawings as Escher/MSODRAWING records inside the
+# 'Workbook' stream: image bytes live in the drawing-group BLIP store
+# (MSODRAWINGGROUP, record 0xEB) and each shape's cell anchor + BLIP index
+# live in a per-sheet MSODRAWING record (0xEC). We reassemble those records
+# (merging CONTINUE, 0x3C), pull each BLIP's bytes, read each shape's anchor
+# row + BLIP index, and map image -> product exactly like attach_images does.
+
+_ESCHER_BLIP_EXT = {
+    0xF01D: "jpg", 0xF02A: "jpg", 0xF01E: "png",
+    0xF01F: "dib", 0xF029: "tif", 0xF01A: "emf", 0xF01B: "wmf", 0xF01C: "pict",
+}
+_ESCHER_BLIP_TWO_UID = {0x46B, 0x6E1, 0x6E3, 0x6E5, 0x7A9}  # recInstance -> 2 rgbUids
+
+
+def _biff_logical_records(wb: bytes):
+    """Yield (record_type, payload) with CONTINUE (0x3C) merged into the prior record."""
+    import struct
+    logical = []
+    pos, n = 0, len(wb)
+    while pos + 4 <= n:
+        rt, rl = struct.unpack("<HH", wb[pos:pos + 4])
+        body = wb[pos + 4:pos + 4 + rl]
+        if rt == 0x3C and logical:
+            logical[-1][1] += body
+        else:
+            logical.append([rt, bytearray(body)])
+        pos += 4 + rl
+    return [(rt, bytes(b)) for rt, b in logical]
+
+
+def _escher_walk(buf):
+    """Yield (fbt, ver, inst, body) for every Escher record, descending into containers."""
+    import struct
+    p, n = 0, len(buf)
+    while p + 8 <= n:
+        ver_inst, fbt, length = struct.unpack("<HHI", buf[p:p + 8])
+        body = buf[p + 8:p + 8 + length]
+        yield fbt, ver_inst & 0x0F, ver_inst >> 4, body
+        if (ver_inst & 0x0F) == 0xF:  # container
+            yield from _escher_walk(body)
+        p += 8 + length
+
+
+def _escher_blips(dgg_blob: bytes):
+    """Return [(ext, image_bytes)] for each BLIP in the drawing-group BLIP store, in order.
+
+    Parses the BStoreContainer -> FBSE -> BLIP structure to get exact byte
+    boundaries (robust against JPEGs that carry an embedded EXIF thumbnail).
+    """
+    import struct
+    blips = []
+    for fbt, _ver, _inst, body in _escher_walk(dgg_blob):
+        if fbt != 0xF007:  # OfficeArtFBSE
+            continue
+        if len(body) < 36:
+            continue
+        cb_name = body[33]
+        off = 36 + cb_name  # FBSE header (36) + optional name
+        if off + 8 > len(body):
+            continue  # blip stored out-of-line (foDelay) — skip
+        vi, rt, rl = struct.unpack("<HHI", body[off:off + 8])
+        rec_instance = vi >> 4
+        ext = _ESCHER_BLIP_EXT.get(rt)
+        data = body[off + 8:off + 8 + rl]
+        if ext in ("jpg", "png", "dib", "tif"):
+            n_uid = 2 if rec_instance in _ESCHER_BLIP_TWO_UID else 1
+            prefix = 16 * n_uid + 1  # rgbUid(s) + 1-byte tag
+            blips.append((ext, data[prefix:]))
+        elif ext:
+            blips.append((ext, data))  # vector formats, rarely used as CADs
+    return blips
+
+
+def _carve_blips(dgg_blob: bytes):
+    """Fallback: carve JPEG/PNG images from the drawing blob by file signature."""
+    imgs = []
+    i, n = 0, len(dgg_blob)
+    while i < n:
+        j = dgg_blob.find(b"\xff\xd8\xff", i)
+        p = dgg_blob.find(b"\x89PNG\r\n\x1a\n", i)
+        cands = [x for x in (j, p) if x != -1]
+        if not cands:
+            break
+        s = min(cands)
+        if s == j:
+            e = dgg_blob.find(b"\xff\xd9", s + 3)
+            if e == -1:
+                break
+            e += 2
+            imgs.append(("jpg", dgg_blob[s:e]))
+        else:
+            e = dgg_blob.find(b"IEND", s)
+            if e == -1:
+                break
+            e += 8  # IEND + 4-byte CRC
+            imgs.append(("png", dgg_blob[s:e]))
+        i = e
+    return imgs
+
+
+def _valid_images(imgs):
+    """Keep only entries whose bytes actually open as an image."""
+    out = []
+    try:
+        from PIL import Image
+        import io as _io
+        for ext, data in imgs:
+            try:
+                Image.open(_io.BytesIO(data)).verify()
+                out.append((ext, data))
+            except Exception:
+                out.append((ext, data))  # keep; PPTX can still embed it
+    except Exception:
+        return imgs
+    return out
+
+
+def attach_images_from_xls(xls_path: Path, products: List[Product]) -> bool:
+    """Extract embedded CADs straight from the .xls (no LibreOffice). Returns True
+    if at least one product got an image. Best-effort: any failure returns False
+    so the caller can fall back to placeholders."""
+    import struct
+    try:
+        import olefile
+    except Exception:
+        return False
+    try:
+        ole = olefile.OleFileIO(str(xls_path))
+    except Exception:
+        return False
+    try:
+        stream = "Workbook" if ole.exists("Workbook") else ("Book" if ole.exists("Book") else None)
+        if stream is None:
+            return False
+        wb = ole.openstream(stream).read()
+    except Exception:
+        return False
+    finally:
+        try:
+            ole.close()
+        except Exception:
+            pass
+
+    recs = _biff_logical_records(wb)
+    dgg_blob = b"".join(body for rt, body in recs if rt == 0xEB)   # MSODRAWINGGROUP
+    draws = [body for rt, body in recs if rt == 0xEC]              # per-shape MSODRAWING
+    if not dgg_blob or not draws:
+        return False
+
+    imgs = _escher_blips(dgg_blob)
+    if not any(ext in ("jpg", "png") for ext, _ in imgs):
+        imgs = _carve_blips(dgg_blob)  # fallback if the structured parse found nothing usable
+    imgs = _valid_images(imgs)
+    if not imgs:
+        return False
+
+    # Per-shape anchor row (0-indexed row1) + BLIP index (pib), in document order.
+    anchors = []
+    for d in draws:
+        row1 = pib = None
+        for fbt, _ver, _inst, body in _escher_walk(d):
+            if fbt == 0xF010 and len(body) >= 8:  # OfficeArtClientAnchor (Excel): flag,col1,dx1,row1,...
+                row1 = struct.unpack("<HHHH", body[:8])[3]
+            elif fbt == 0xF00B:  # OfficeArtFOPT
+                q = 0
+                while q + 6 <= len(body):
+                    pid, val = struct.unpack("<HI", body[q:q + 6])
+                    q += 6
+                    if (pid & 0x3FFF) == 0x0104:  # pib = BLIP index (1-based)
+                        pib = val
+        anchors.append((row1 if row1 is not None else 0, pib))
+
+    sn_rows = sorted(p.style_row for p in products)
+    by_sr = {p.style_row: p for p in products}
+    got = False
+    for idx, (row1, pib) in enumerate(anchors):
+        if pib and 1 <= pib <= len(imgs):
+            ext, data = imgs[pib - 1]
+        elif idx < len(imgs):
+            ext, data = imgs[idx]
+        else:
+            continue
+        anchor_row = row1 + 1  # products store style_row 1-indexed; drawing row1 is 0-indexed
+        target = next((sr for sr in sn_rows if sr >= anchor_row), sn_rows[-1])
+        prod = by_sr[target]
+        if prod.image_bytes is None:
+            prod.image_bytes = data
+            prod.image_ext = ext
+            got = True
+    return got
+
+
+# ---------------------------------------------------------------------------
 # Border helper for table cells
 # ---------------------------------------------------------------------------
 
@@ -1032,7 +1232,21 @@ def build_deck(xls_path: Path, xlsx_path: Path, out_dir: Path,
                meeting_date: Optional[str] = None, photos_dir=None,
                cleanup: bool = False) -> Path:
     file_brand, products = parse_xls(xls_path)
-    attach_images(xlsx_path, products)
+
+    # CAD images: prefer the .xlsx companion (LibreOffice conversion); if it's
+    # missing or yields nothing (e.g. no/broken LibreOffice), fall back to
+    # extracting the CADs straight from the .xls BIFF stream. Either way the
+    # deck gets its CADs; if both fail, slides show the "Product Image" placeholder.
+    if xlsx_path and Path(xlsx_path).exists():
+        try:
+            attach_images(xlsx_path, products)
+        except Exception:
+            pass
+    if not any(p.image_bytes for p in products):
+        try:
+            attach_images_from_xls(xls_path, products)
+        except Exception:
+            pass
 
     prs = Presentation()
     prs.slide_width = SLIDE_W
@@ -1073,7 +1287,9 @@ def build_deck(xls_path: Path, xlsx_path: Path, out_dir: Path,
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("xls", help="original .xls path")
-    ap.add_argument("xlsx", help="converted .xlsx (for image extraction)")
+    ap.add_argument("xlsx", nargs="?", default=None,
+                    help="OPTIONAL .xlsx companion (LibreOffice conversion) for CAD extraction. "
+                         "If omitted or unreadable, CADs are extracted directly from the .xls.")
     ap.add_argument("--out-dir", default=".")
     ap.add_argument("--meeting-date", default=None)
     ap.add_argument("--photos-dir", default=None,
@@ -1082,7 +1298,8 @@ def main():
     ap.add_argument("--cleanup-photos", action="store_true",
                     help="delete --photos-dir after the deck is built")
     args = ap.parse_args()
-    final = build_deck(Path(args.xls), Path(args.xlsx), Path(args.out_dir), args.meeting_date,
+    xlsx = Path(args.xlsx) if args.xlsx else None
+    final = build_deck(Path(args.xls), xlsx, Path(args.out_dir), args.meeting_date,
                        args.photos_dir, cleanup=args.cleanup_photos)
     print("wrote:", final)
 

@@ -41,11 +41,15 @@ The scripts need LibreOffice (`soffice`, for `.xls → .xlsx` conversion), a few
 the DejaVu/Liberation fonts (already present in this sandbox). Install the Python deps once:
 
 ```bash
-pip install python-pptx openpyxl pillow numpy xlrd --break-system-packages
+pip install python-pptx openpyxl pillow numpy xlrd olefile --break-system-packages
 ```
 
-`xlrd` is only needed for the lineguide mode (it reads the original `.xls` cache); the rest are
-shared. If `soffice` isn't on PATH, tell the user their environment needs LibreOffice and stop.
+`xlrd` and `olefile` are only needed for the lineguide mode (`xlrd` reads the original `.xls`
+cache; `olefile` lets the generator pull embedded CADs straight from the `.xls` when LibreOffice
+is unavailable — see below); the rest are shared. LibreOffice (`soffice`) is **preferred** for the
+`.xls → .xlsx` companion conversion, but **no longer required**: if `soffice` is missing or broken,
+the lineguide generator falls back to extracting CADs directly from the `.xls`, so you can proceed
+without it. (Merch Board mode still needs `soffice`.)
 
 ## Step 1 — pick the mode
 
@@ -70,26 +74,37 @@ Full detail (layout, parsing rules, brand filename rules, edge cases) is in
 `references/lineguide.md`. Read it if a run fails or the output looks off; otherwise the script
 handles it.
 
-**Inputs.** The script takes *two* paths: the original `.xls` (values are read from its cached
-formula results via `xlrd` — this matters, because converting to `.xlsx` silently re-evaluates
-some formulas and corrupts a few cells like Duty Rate) and an `.xlsx` companion (only used to
-extract the embedded product images, which `xlrd` can't reach). You produce the companion
-yourself with LibreOffice.
+**Inputs.** The script always reads *values* from the original `.xls` via `xlrd` (this matters,
+because converting to `.xlsx` silently re-evaluates some formulas and corrupts a few cells like
+Duty Rate). For the embedded product images (CADs), it takes an **optional** `.xlsx` companion:
+- If you pass a companion, images are read from it (via openpyxl).
+- If you omit it — or it's unreadable, or has no images — the script **automatically extracts the
+  CADs directly from the `.xls`** BIFF stream (needs `olefile`). So a working LibreOffice is no
+  longer required; the CADs come out either way.
 
-**Run it:**
+**Run it (simplest — no companion, works even without LibreOffice):**
 
 ```bash
-# 1. make the .xlsx companion for image extraction
-soffice --headless --convert-to xlsx --outdir /tmp "path/to/lineguide.xls"
+python3 scripts/lineguide_deck_generator.py \
+    "path/to/lineguide.xls" \
+    --out-dir /mnt/user-data/outputs
+```
 
-# 2. build the deck (values from the .xls, images from the .xlsx)
+**Or, if LibreOffice works and you prefer the companion path:**
+
+```bash
+soffice --headless --convert-to xlsx --outdir /tmp "path/to/lineguide.xls"   # optional
 python3 scripts/lineguide_deck_generator.py \
     "path/to/lineguide.xls" "/tmp/lineguide.xlsx" \
     --out-dir /mnt/user-data/outputs
 ```
 
-- If the user only has an `.xlsx` (no `.xls`), pass it as **both** arguments and mention that
-  formula-cached values may differ slightly from the original `.xls` source of truth.
+Either way, confirm the CADs landed: a slide showing the "Product Image" placeholder means neither
+path found an image for that style.
+
+- If the user only has an `.xlsx` (no `.xls`), pass it as the first argument; the direct-extraction
+  fallback won't apply (it needs the `.xls`), so images come from openpyxl and formula-cached values
+  may differ slightly from the original `.xls` source of truth.
 - Meeting date: the filename uses today's date as `{M.DD}` (month no leading zero, day two
   digits). Override with `--meeting-date 6.02` if the user names a specific meeting date.
 
