@@ -26,6 +26,19 @@ line (argv is visible to other processes):
     GDRIVE_CLIENT_SECRET
     GDRIVE_REFRESH_TOKEN
 
+Mint them once with mint_drive_token.py (run that on your own machine, not
+in a container). The token needs BOTH of these scopes:
+
+    drive.file              to create the upload. On its own it is not
+                            enough: it grants access only to files this
+                            app created, so every folder lookup below
+                            would 404.
+    drive.metadata.readonly to resolve the month folder, read its
+                            canAddChildren capability, and check for a
+                            name clash -- all of which read metadata of
+                            files this app did not create. Metadata only,
+                            so no file contents are ever readable.
+
 Use --dry-run to check argument handling, date/month resolution and the
 target folder id without needing credentials or touching Drive.
 """
